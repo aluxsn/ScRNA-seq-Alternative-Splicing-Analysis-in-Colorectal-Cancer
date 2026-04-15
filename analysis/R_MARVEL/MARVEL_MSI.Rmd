@@ -1,0 +1,854 @@
+---
+title: "MARVEL_Notebook for 18 samples MSI"
+output: html_notebook
+---
+
+
+```{r}
+#load MARVEL packages
+library(Seurat)
+library(MARVEL)
+# loa adjunct packages for selected MARVEL  features_MSI 
+# General data processing, plotting
+library(ggnewscale)
+library(ggrepel)
+library(reshape2)
+library(plyr)
+library(stringr)
+library(textclean)
+```
+```{r}
+# Gene ontology analysis
+
+library(AnnotationDbi)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(org.Mm.eg.db)
+```
+```{r}
+# ad hoc gene candidate gene analysis
+library(gtools)
+```
+```{r}
+# Visualising splice junction location
+library(GenomicRanges)
+library(IRanges)
+library(S4Vectors)
+library(wiggleplotr)
+```
+```{r}
+# Load adjunct packages for this tutorial
+library(Matrix)
+library(data.table)
+library(ggplot2)
+library(gridExtra)
+```
+
+```{r}
+library(usethis)
+library(devtools)
+```
+
+
+
+```{r}
+# Matrix
+path <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/Gene_SingCellaR_MSI/"
+file <- "matrix_normalised.mtx"
+df.gene.norm <- readMM(paste(path, file, sep=""))
+
+df.gene.norm[df.gene.norm[,1] !=0,][1:5,1:5]
+```
+```{r}
+# cell metadata
+path <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/Gene_SingCellaR_MSI/"
+file <- "phenoData.txt"
+df.gene.norm.pheno <- read.table(paste(path, file, sep=""), sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+head(df.gene.norm.pheno)
+```
+
+
+```{r}
+# gene metadata
+path <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/Gene_SingCellaR_MSI/"
+file <- "featureData.txt"
+df.gene.norm.feature <- read.table(paste(path, file, sep=""), sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+head(df.gene.norm.feature)
+
+```
+```{r}
+#Gene counts
+# Matrix
+path <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/Gene_STARsolo_MSI/"
+file <- "matrix_counts.mtx"
+df.gene.count <- readMM(paste(path, file, sep=""))
+
+df.gene.count[df.gene.count[,1] !=0,][1:5,1:5]
+
+```
+```{r}
+# cell metadata
+path <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/Gene_STARsolo_MSI/"
+file <- "phenoData.txt"
+df.gene.count.pheno <- read.table(paste(path, file, sep=""), sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+head(df.gene.count.pheno)
+```
+```{r}
+# feature metadata
+path <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/Gene_STARsolo_MSI/"
+file <- "featureData.txt"
+df.gene.count.feature <- read.table(paste(path, file, sep=""), sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+head(df.gene.count.feature)
+```
+
+#Splice junction counts
+## Matrix
+```{r}
+
+path <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/SJ_STARsolo_MSI/"
+file <- "matrix_counts.mtx"
+df.sj.count <- readMM(paste(path, file, sep=""))
+df.sj.count   #[df.sj.count[,1] !=0,][1:5,1:5]
+
+```
+
+
+```{r}
+# cell metadata
+path <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/SJ_STARsolo_MSI/"
+file <- "phenoData.txt"
+df.sj.count.pheno <- read.table(paste(path, file, sep=""), sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+head(df.sj.count.pheno)
+
+```
+```{r}
+# feature metadata
+path <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/SJ_STARsolo_MSI/"
+file <- "featureData.txt"
+df.sj.count.feature <- read.table(paste(path, file, sep=""), sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+head(df.sj.count.feature)
+
+```
+
+```{r}
+#tSNE/UMAP coordinates
+path <- "~/Desktop/stage_M2/integrate_marvel/SingCellaR_output/"
+file <- "dim_red_coordinates_MSI.txt"
+df.coord <- read.table(paste(path, file, sep=""), sep="\t", header=TRUE, stringsAsFactors=FALSE)
+
+head(df.coord)
+
+```
+##Gene transfer file
+   For consistency, this GTF should be the same file previously used for cellranger and STARsolo above.
+```{r}
+path <- "/home/assanefall/yard/run_cellranger_count/refdata-gex-GRCh38-2020-A/genes/"
+file <- "genes.gtf"
+gtf <- as.data.frame(fread(paste(path, file, sep=""), sep="\t", header=FALSE, stringsAsFactors=FALSE))
+gtf$V9 = gsub("gene_type","gene_biotype",gtf$V9)
+gtf$V9 = gsub("transcript_type","transcript_biotype",gtf$V9)
+gtf$V1 = gsub("chr","",gtf$V1)
+head(gtf)
+```
+```{r}
+#Create MARVEL object
+marvel <- CreateMarvelObject.10x(gene.norm.matrix=df.gene.norm,
+                                 gene.norm.pheno=df.gene.norm.pheno,
+                                 gene.norm.feature=df.gene.norm.feature,
+                                 gene.count.matrix=df.gene.count,
+                                 gene.count.pheno=df.gene.count.pheno,
+                                 gene.count.feature=df.gene.count.feature,
+                                 sj.count.matrix=df.sj.count,
+                                 sj.count.pheno=df.sj.count.pheno,
+                                 sj.count.feature=df.sj.count.feature,
+                                 pca=df.coord,
+                                 gtf=gtf
+                                 )
+```
+```{r}
+"Pre-process data
+             This step annotates the gene and splice junction metadata, and subsequently enables us to retain only high-quality splice junctions and genes of particular biotype, e.g., protein-coding genes.
+             
+Annotate gene metadata
+             This step annotates the genes with their corres_MSIponding gene biotype, e.g., protein-coding, lincRNA, pseudogene etc."
+
+marvel <- AnnotateGenes.10x(MarvelObject=marvel)
+head(marvel$gene.metadata)
+```
+
+
+```{r}
+table(marvel$gene.metadata$gene_type)
+```
+```{r}
+  " This step creates and then annotates the splice junction metadata. For each splice junction, the start and end exons are annotated with their corresponding gene names.
+
+Annotate junction metadata"
+
+marvel <- AnnotateSJ.10x(MarvelObject=marvel)
+
+head(marvel$sj.metadata)
+```
+```{r}
+"Validate junctions
+             Only splice junctions whose start and end mapped to same gene are retained."
+marvel <- ValidateSJ.10x(MarvelObject=marvel)
+```
+```{r}
+"Subset CDS genes
+             Moving forward, we will only retain genes with coding sequence (CDS), i.e., protein-coding genes."
+
+marvel <- FilterGenes.10x(MarvelObject=marvel,
+                          gene.type="protein_coding"
+                          )
+```
+
+```{r}
+marvel <- CheckAlignment.10x(MarvelObject=marvel)
+```
+
+
+#ANNOTATION CENSUS
+
+
+```{r}
+load(file = '~/Desktop/stage_M2/integrate_marvel/annotation_Census_MSI.rdata')
+```
+## subset
+```{r}
+marvel_msi = Subset_marvel(marvel,res_MSI$pred$barcode)
+```
+#### subset : cancer cells
+
+# ```{r}
+#lll = marvel_msi$sample.metadata$cell.type[marvel_msi$sample.metadata$cell.type=="cancer cell"]
+# ```
+# ```{r}
+# marvel_cc = Subset_marvel(marvel_msi,lll)
+# ```
+```{r}
+load("~/Desktop/stage_M2/integrate_marvel/annotation_Census_MSI.rdata")
+marvel_msi$sample.metadata$cell.type <- res_MSI$pred$celltype
+```
+
+
+```{r}
+msi_ids <- c(
+  "SRR15652857", "SRR15652858", "SRR15652897",
+  "SRR15652970", "SRR15652975",
+  "SRR15652896", "SRR15652861", "SRR15652900",
+  "SRR15652844", "SRR15652845", "SRR15652846", "SRR15652847",
+  "SRR15652867", "SRR15652868", "SRR15652869", "SRR15652870",
+  "SRR15652862", "SRR15652859"
+)
+
+for (id in msi_ids) {
+  marvel_msi$sample.metadata$status[grepl(id, marvel_msi$sample.metadata$cell.id)] <- "MSI"
+}
+
+```
+
+Explore expression
+
+             Due to the huge number of splice junctions detected, it will not be time-effective to include all splice junctions for differential splicing analysis. Therefore, we will only include splice junctions expres_MSIsed in at least a user-defined proportion of cells for differential splicing analysis. To determine this thres_MSIhold, we will explore the number of cells expres_MSIsing a given gene and splice junction.
+            
+```{r}
+table(marvel_msi$sample.metadata$donor.id)
+
+```
+             
+```{r}
+save(marvel_msi,file="/home/assanefall/Desktop/stage_M2/integrate_marvel/MARVEL_input/MARVEL_MSI.rdata")
+```
+
+
+
+```{r}
+#df1 = as.data.frame(marvel_msi$sample.metadata)
+#df2 = as.data.frame(res_MSI$pred)
+#cell = merge(df2, df1, by.x = 'barcode', by.y='cell.id')
+```
+             
+```{r}
+#marvel_msi$sample.metadata$cell.type <- cell$celltype
+#sj_count = marvel_msi$sj.count.matrix@Dimnames
+```
+             
+Gene expression rate
+# Define cell groups
+  # Retrieve sample metadata
+```{r}
+
+sample.metadata <- marvel_msi$sample.metadata
+
+# Group 1 (reference)
+index <- which(sample.metadata$cell.type=="TA")
+cell.ids.1 <- sample.metadata[index, "cell.id"]
+length(cell.ids.1)
+
+```
+```{r}
+ # Group 2
+index <- which(sample.metadata$cell.type=="Colonocyte")
+cell.ids.2 <- sample.metadata[index, "cell.id"]
+length(cell.ids.2)
+```
+```{r}
+# Explore % of cells expres_MSIsing genes
+marvel_msi <- PlotPctExprCells.Genes.10x(MarvelObject=marvel_msi,
+                                     cell.group.g1=cell.ids.1,
+                                     cell.group.g2=cell.ids.2,
+                                     min.pct.cells=5
+                                     )
+marvel_msi$pct.cells.expr$Gene$Plot
+```
+
+
+```{r}
+head(marvel_msi$pct.cells.expr$Gene$Data)
+```
+```{r}
+
+    "_min.pct.cells option. The minimum percentage of cells expres_MSIsing a given gene for that gene to be included for expression exploration analysis here.
+    
+    _Here, we observe majority of genes to be expres_MSIsed in ~10% of cells.
+
+SJ expression rate"
+
+marvel_msi <- PlotPctExprCells.SJ.10x(MarvelObject=marvel_msi,
+                                  cell.group.g1=cell.ids.1,
+                                  cell.group.g2=cell.ids.2,
+                                  min.pct.cells.genes=5,
+                                  min.pct.cells.sj=5,
+                                  downsample=TRUE,
+                                  downsample.pct.sj=10
+                                  )
+
+marvel_msi$pct.cells.expr$SJ$Plot
+```
+```{r}
+head(marvel_msi$pct.cells.expr$SJ$Data)
+```
+```{r}
+"Differential analysis"
+
+"L'analyse différentielle est la pierre angulaire de l'analyse de séquençage d'ARN. Il s'agit de la première étape pour identifier les gènes candidats et les isoformes pour la validation expérimentale en aval.
+
+  Pour l'analyse d'épissage différentiel, MARVEL utilise l'approche basée sur la permutation pour comparer les valeurs PSI entre deux échantillons pseudo-globaux"
+
+```
+```{r}
+#Differential splicing analysis
+
+marvel_msi <- CompareValues.SJ.10x(MarvelObject=marvel_msi,
+                               cell.group.g1=cell.ids.1,
+                               cell.group.g2=cell.ids.2,
+                               min.pct.cells.genes=10,
+                               min.pct.cells.sj=10,
+                               min.gene.norm=1.0,
+                               seed=1,
+                               n.iterations=100,
+                               downsample=TRUE,
+                               show.progress=FALSE
+                               )
+```
+```{r}
+#Differential gene analysis
+
+marvel_msi <- CompareValues.Genes.10x(MarvelObject=marvel_msi,
+                                  show.progress= T
+                                  )
+
+head(marvel_msi$DE$SJ$Table)
+```
+```{r}
+#Volcano plot: Splicing
+marvel_msi <- PlotDEValues.SJ.10x(MarvelObject=marvel_msi,
+                              pval=0.05,
+                              delta=5,
+                              min.gene.norm=1.0,
+                              anno=FALSE
+                              )
+
+marvel_msi$DE$SJ$VolcanoPlot$SJ$Plot
+```
+```{r}
+head(marvel_msi$DE$SJ$VolcanoPlot$SJ$Data[,c("coord.intron", "gene_short_name", "sig")])
+```
+```{r}
+#Gene-splicing dynamics
+
+#Assign dynamics
+
+marvel_msi <- IsoSwitch.10x(MarvelObject=marvel_msi,
+                        pval.sj=0.05,
+                        delta.sj=5,
+                        min.gene.norm=1.0,
+                        pval.adj.gene=0.05,
+                        log2fc.gene=0.5
+                        )
+
+marvel_msi$SJ.Gene.Cor$Proportion$Plot
+```
+```{r}
+marvel_msi$SJ.Gene.Cor$Proportion$Table
+```
+```{r}
+head(marvel_msi$SJ.Gene.Cor$Data[,c("coord.intron", "gene_short_name", "cor.complete")])
+```
+#Coordinated
+```{r}
+
+# Define cell groups
+    # Retrieve sample metadata
+    sample.metadata <- marvel_msi$sample.metadata
+    
+  
+    index <- which(sample.metadata$cell.type=="TA")
+    cell.ids.1 <- sample.metadata[index, "cell.id"]
+    length(cell.ids.1)
+```
+
+```{r}
+   
+    index <- which(sample.metadata$cell.type=="Colonocyte")
+    cell.ids.2 <- sample.metadata[index, "cell.id"]
+    length(cell.ids.2)
+```
+```{r}
+
+
+    # Save into list
+    cell.group.list <- list("TA"=cell.ids.1,
+                            "Colonocyte"=cell.ids.2
+                            )
+    
+# Plot cell groups
+marvel_msi <- PlotValues.PCA.CellGroup.10x(MarvelObject=marvel_msi,
+                                       cell.group.list=cell.group.list,
+                                       legendtitle="Cell group",
+                                       type="tsne"
+                                       )
+
+plot_group <- marvel_msi$adhocPlot$PCA$CellGroup
+
+# Plot gene expression
+marvel_msi <- PlotValues.PCA.Gene.10x(MarvelObject=marvel_msi,
+                                  gene_short_name="VIM",
+                                  color.gradient=c("grey","cyan","green","yellow","red"),
+                                  type="tsne"
+                                  )
+
+
+plot_gene <- marvel_msi$adhocPlot$PCA$Gene
+
+# Plot PSI
+marvel_msi <- PlotValues.PCA.PSI.10x(MarvelObject=marvel_msi,
+                                 coord.intron="chr10:17235390:17235845",
+                                 min.gene.count=3,
+                                 log2.transform=FALSE,
+                                 color.gradient=c("grey","cyan","green","yellow","red"),
+                                 type="tsne"
+                                 )
+ 
+plot_sj <- marvel_msi$adhocPlot$PCA$PSI
+
+# Arrange and view plots
+grid.arrange(plot_group, plot_gene, plot_sj, nrow=1)
+```
+```{r}
+#Opposing
+
+# Plot gene expression
+marvel_msi <- PlotValues.PCA.Gene.10x(MarvelObject=marvel_msi,
+                                  gene_short_name="UQCRH",
+                                  color.gradient=c("grey","cyan","green","yellow","red"),
+                                  type="tsne"
+                                  )
+
+
+plot_gene <- marvel_msi$adhocPlot$PCA$Gene
+
+# Plot PSI
+marvel_msi <- PlotValues.PCA.PSI.10x(MarvelObject=marvel_msi,
+                                 coord.intron="chr1:46310317:46316551",
+                                 min.gene.count=3,
+                                 log2.transform=FALSE,
+                                 color.gradient=c("grey","cyan","green","yellow","red"),
+                                 type="tsne"
+                                 )
+ 
+plot_sj <- marvel_msi$adhocPlot$PCA$PSI
+
+# Arrange and view plots
+grid.arrange(plot_group, plot_gene, plot_sj, nrow=1)
+```
+#Iso-switch
+```{r}
+
+
+# Plot gene expression
+marvel_msi <- PlotValues.PCA.Gene.10x(MarvelObject=marvel_msi,
+                                  gene_short_name="RBM39",
+                                  color.gradient=c("grey","cyan","green","yellow","red"),
+                                  type="tsne"
+                                  )
+
+
+plot_gene <- marvel_msi$adhocPlot$PCA$Gene
+
+# Plot PSI: SJ-1
+marvel_msi <- PlotValues.PCA.PSI.10x(MarvelObject=marvel_msi,
+                                 coord.intron="chr20:35740888:35741940",
+                                 min.gene.count=3,
+                                 log2.transform=FALSE,
+                                 color.gradient=c("grey","cyan","green","yellow","red"),
+                                 type="tsne"
+                                 )
+ 
+plot_sj_1 <- marvel_msi$adhocPlot$PCA$PSI
+
+# Plot PSI: SJ-2
+marvel_msi <- PlotValues.PCA.PSI.10x(MarvelObject=marvel_msi,
+                                 coord.intron="chr20:35739018:35740823",
+                                 min.gene.count=3,
+                                 log2.transform=FALSE,
+                                 color.gradient=c("grey","cyan","green","yellow","red"),
+                                 type="tsne"
+                                 )
+ 
+plot_sj_2 <- marvel_msi$adhocPlot$PCA$PSI
+
+# Arrange and view plots
+grid.arrange(plot_gene, plot_sj_1, plot_sj_2, nrow=1)
+```
+#Complex
+```{r}
+
+
+# Gene 1
+  # Plot gene expression
+  marvel_msi <- PlotValues.PCA.Gene.10x(MarvelObject=marvel_msi,
+                                    gene_short_name="TPM1",
+                                    color.gradient=c("grey","cyan","green","yellow","red"),
+                                    type="tsne"
+                                    )
+
+  plot.1_gene <- marvel_msi$adhocPlot$PCA$Gene
+  
+  # Plot PSI: SJ-1
+  marvel_msi <- PlotValues.PCA.PSI.10x(MarvelObject=marvel_msi,
+                                   coord.intron="chr15:63064143:63065895",
+                                   min.gene.count=3,
+                                   log2.transform=FALSE,
+                                   color.gradient=c("grey","cyan","green","yellow","red"),
+                                   type="tsne"
+                                   )
+   
+  plot.1_sj_1 <- marvel_msi$adhocPlot$PCA$PSI
+  
+  # Plot PSI: SJ-2
+  marvel_msi <- PlotValues.PCA.PSI.10x(MarvelObject=marvel_msi,
+                                   coord.intron="chr15:63044153:63056984",
+                                   min.gene.count=3,
+                                   log2.transform=FALSE,
+                                   color.gradient=c("grey","cyan","green","yellow","red"),
+                                   type="tsne"
+                                   )
+   
+  plot.1_sj_2 <- marvel_msi$adhocPlot$PCA$PSI
+
+# Gene 2
+  # Plot gene expression
+  marvel_msi <- PlotValues.PCA.Gene.10x(MarvelObject=marvel_msi,
+                                    gene_short_name="TPM2",
+                                    color.gradient=c("grey","cyan","green","yellow","red"),
+                                    type="tsne"
+                                    )
+  
+  
+  plot.2_gene <- marvel_msi$adhocPlot$PCA$Gene
+  
+  # Plot PSI: SJ-1
+  marvel_msi <- PlotValues.PCA.PSI.10x(MarvelObject=marvel_msi,
+                                   coord.intron="chr9:35684808:35685268",
+                                   min.gene.count=3,
+                                   log2.transform=FALSE,
+                                   color.gradient=c("grey","cyan","green","yellow","red"),
+                                   type="tsne"
+                                   )
+   
+  plot.2_sj_1 <- marvel_msi$adhocPlot$PCA$PSI
+  
+  # Plot PSI: SJ-2
+  marvel_msi <- PlotValues.PCA.PSI.10x(MarvelObject=marvel_msi,
+                                   coord.intron="chr9:35684551:35685063",
+                                   min.gene.count=3,
+                                   log2.transform=FALSE,
+                                   color.gradient=c("grey","cyan","green","yellow","red"),
+                                   type="tsne"
+                                   )
+   
+  plot.2_sj_2 <- marvel_msi$adhocPlot$PCA$PSI
+  
+# Arrange and view plots
+grid.arrange(plot.1_gene, plot.1_sj_1, plot.1_sj_2, 
+             plot.2_gene, plot.2_sj_1, plot.2_sj_2,
+             nrow=2
+             )
+```
+
+##Gene ontology analysis
+             Gene ontology analysis or pathway enrichment analysis categorises the differentially spliced genes between cancer cells and the others into biological pathways. This may identify sets of genes with similar function or belong to similar biological pathways that are concurrently spliced.
+```{r}
+
+
+marvel_msi <- BioPathways.10x(MarvelObject=marvel_msi,
+                          pval=0.05,
+                          delta=5,
+                          min.gene.norm=1.0,
+                          method.adjust="fdr",
+                          species="human"
+                          )
+
+head(marvel_msi$DE$BioPathways$Table)
+
+```
+# Plot pathways
+```{r}
+
+go.terms <- c("ATP metabolic process",
+              "mitochondrial res_piratory chain complex assembly",
+              "aerobic res_Mpiration",
+              "ribose phosphate biosynthetic process",
+              "RNA splicing",
+              "reactive oxygen species metabolic process",
+              "response to mitochondrial depolarisation",
+              "intracellular protein transmembrane transport",
+              "U2-type prespliceosome assembly",
+              "regulation of cell communication by electrical coupling",
+              "response to zinc ion"
+              )
+
+marvel_msi <- BioPathways.Plot.10x(MarvelObject=marvel_msi,
+                               go.terms,
+                               y.label.size=8,
+                               offset=0.5
+                               )
+
+marvel_msi$DE$BioPathways$Plot
+```
+#Candidate gene analysis
+
+####Define cell groups
+
+# Retrieve sample metadata
+## TA
+```{r}
+
+sample.metadata <- marvel_msi$sample.metadata
+
+
+index <- which(sample.metadata$cell.type=="TA")
+cell.ids.1 <- sample.metadata[index, "cell.id"]
+length(cell.ids.1)
+
+```
+# Colonocytes
+```{r}
+
+index <- which(sample.metadata$cell.type=="Colonocyte")
+cell.ids.2 <- sample.metadata[index, "cell.id"]
+length(cell.ids.2)
+```
+### Goblet Cell
+```{r}
+
+index <- which(sample.metadata$cell.type=="Goblet cell")
+cell.ids.3 <- sample.metadata[index, "cell.id"]
+length(cell.ids.3)
+```
+
+### Microfold
+```{r}
+
+index <- which(sample.metadata$cell.type=="Microfold cell")
+cell.ids.4 <- sample.metadata[index, "cell.id"]
+length(cell.ids.4)
+```
+```{r}
+# Save into list
+cell.group.list <- list("TA"=cell.ids.1,
+                        "Colonocyte"=cell.ids.2,
+                        "Goblet cell"=cell.ids.3,
+                        "Microfold cell"=cell.ids.4
+                        )
+```
+
+#Gene expression profiling
+```{r}
+
+
+marvel_msi <- adhocGene.TabulateExpression.Gene.10x(MarvelObject=marvel_msi,
+                                                cell.group.list=cell.group.list,
+                                                gene_short_name="TPM2",
+                                                min.pct.cells=10,
+                                                downsample=TRUE
+                                                )
+
+marvel_msi$adhocGene$expression$Gene$Plot
+```
+```{r}
+marvel$adhocGene$expression$Gene$Table
+```
+#SJ usage profiling
+```{r}
+
+
+marvel_msi <- adhocGene.Tabulateexpression.PSI.10x(MarvelObject=marvel_msi,
+                                               min.pct.cells=10
+                                               )
+
+marvel_msi$adhocGene$expression$PSI$Plot
+
+
+```
+```{r}
+head(marvel$adhocGene$expression$PSI$Table)
+```
+"Gene-splicing relationship."
+
+# Perform differential gene expression analysis for all pair-wise group comparison
+```{r}
+marvel_msi <- adhocGene.DE.Gene.10x(MarvelObject=marvel_msi)
+```
+# Perform differential splicing expression analysis for all pair-wise group comparison
+
+```{r}
+marvel <- adhocGene.DE.PSI.10x(MarvelObject=marvel)
+```
+
+# Retrieve SJ DE res_MSIults table
+```{r}
+
+res_MSIults <- marvel$adhocGene$DE$PSI$Data
+
+# SJ-1
+  # Define SJ
+  coord.intron <- res_MSIults[which(res_MSIults$figure.column=="SJ-1"), "coord.intron"]
+  coord.intron <- unique(coord.intron)
+  coord.intron
+```
+```{r}
+  # Plot
+  marvel <- adhocGene.PlotDEValues.10x(MarvelObject=marvel,
+                                       coord.intron=coord.intron,
+                                       log2fc.gene=0.5,
+                                       delta.sj=5,
+                                       label.size=2,
+                                       point.size=2,
+                                       xmin=-2.0,
+                                       xmax=2.0,
+                                       ymin=-25,
+                                       ymax=25
+                                       )
+
+  plot.1 <- marvel$adhocGene$DE$VolcanoPlot$Plot
+
+# SJ-2
+  # Define SJ
+  coord.intron <- res_MSIults[which(res_MSIults$figure.column=="SJ-2"), "coord.intron"]
+  coord.intron <- unique(coord.intron)
+  coord.intron
+```
+```{r}
+  # Plot
+  marvel <- adhocGene.PlotDEValues.10x(MarvelObject=marvel,
+                                       coord.intron=coord.intron,
+                                       log2fc.gene=0.5,
+                                       delta.sj=5,
+                                       label.size=2,
+                                       point.size=2,
+                                       xmin=-2.0,
+                                       xmax=2.0,
+                                       ymin=-25,
+                                       ymax=25
+                                       )
+                                         
+  plot.2 <- marvel$adhocGene$DE$VolcanoPlot$Plot    
+
+# SJ-3
+    # Define SJ
+    coord.intron <- res_MSIults[which(res_MSIults$figure.column=="SJ-3"), "coord.intron"]
+    coord.intron <- unique(coord.intron)
+    coord.intron
+```
+```{r}
+    # Plot
+    marvel <- adhocGene.PlotDEValues.10x(MarvelObject=marvel,
+                                         coord.intron=coord.intron,
+                                         log2fc.gene=0.5,
+                                         delta.sj=5,
+                                         label.size=2,
+                                         point.size=2,
+                                         xmin=-2.0,
+                                         xmax=2.0,
+                                         ymin=-25,
+                                         ymax=25
+                                         )
+                                         
+    plot.3 <- marvel$adhocGene$DE$VolcanoPlot$Plot    
+
+# Arrange and view plots
+grid.arrange(plot.1, plot.2, plot.3,
+             nrow=3
+             )
+```
+```{r}
+library(wiggleplotr)
+#Locate SJ position"
+
+# SJ-1
+    # Define SJs to plot
+    coord.intron <- res_MSIults[which(res_MSIults$figure.column=="SJ-1"), "coord.intron"]
+    coord.intron <- unique(coord.intron)
+    coord.intron
+```
+```{r}
+ # Plot
+marvel <- adhocGene.PlotSJPosition.10x(MarvelObject=marvel,
+                                      coord.intron=coord.intron,
+                                      res_MSIcale_introns=FALSE,
+                                      show.protein.coding.only=TRUE,
+                                      anno.label.size=1.5
+                                      )
+
+marvel$adhocGene$SJPosition$Plot
+  
+```
+```{r}
+# SJ-2
+    # Define SJs to plot
+    coord.intron <- res_MSIults[which(res_MSIults$figure.column=="SJ-2"), "coord.intron"]
+    coord.intron <- unique(coord.intron)
+    coord.intron
+```
+```{r}
+# Plot
+    marvel <- adhocGene.PlotSJPosition.10x(MarvelObject=marvel,
+                                          coord.intron=coord.intron,
+                                          res_MSIcale_introns=FALSE,
+                                          show.protein.coding.only=TRUE,
+                                          anno.label.size=1.5
+                                          )
+    
+    marvel$adhocGene$SJPosition$Plot
+```
+
+
