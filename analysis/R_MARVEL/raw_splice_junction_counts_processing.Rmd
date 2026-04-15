@@ -1,0 +1,171 @@
+---
+title: "Raw Splice Junction Counts Processing from STARsolo : MSI data"
+output: html_notebook
+---
+
+# Load packages
+```{r}
+
+
+
+library(SingCellaR)
+library(data.table)
+library(plyr)
+library(Matrix)
+library(SingleCellExperiment)
+```
+# Load integrated R object
+
+```{r}
+path <- "~/Desktop/stage_M2/integrate_marvel/SingCellaR_output/"
+file <- "Integrated_samples_MSI.rdata"
+load(file = paste(path, file, sep=""))
+
+# Retrieve metadata
+df.pheno <- object@meta.data
+```
+
+## Function to process one STARsolo sample
+
+```{r}
+process_sample <- function(sample_id, base_path, df.pheno, add_suffix=FALSE) {
+  
+
+  # Read barcode file
+
+  df.pheno.2 <- as.data.frame(
+    fread(paste(base_path, "SJ/raw/barcodes.tsv", sep=""),
+          sep="\t", header=FALSE, stringsAsFactors=FALSE)
+  )
+  
+  names(df.pheno.2) <- "cell.id."
+  df.pheno.2$cell.id <- df.pheno.2$cell.id.
+  
+  if(add_suffix){
+    df.pheno.2$cell.id <- paste(df.pheno.2$cell.id, paste0("_", sample_id), sep="")
+  }
+  
+ 
+  # Read feature file
+ 
+  feature_file <- list.files(base_path, pattern="SJ.out.tab|features.tsv", full.names=TRUE)[1]
+  
+  df.feature <- as.data.frame(
+    fread(feature_file, sep="\t", header=FALSE, stringsAsFactors=FALSE)
+  )
+  
+  df.feature <- df.feature[, c("V1", "V2", "V3")]
+  names(df.feature) <- c("chr", "start", "end")
+  
+  df.feature$coord.intron <- paste(df.feature$chr,
+                                   df.feature$start,
+                                   df.feature$end,
+                                   sep=":")
+  
+ 
+  # Read matrix
+ 
+  df <- readMM(paste(base_path, "SJ/raw/matrix.mtx", sep=""))
+  
+  colnames(df) <- df.pheno.2$cell.id.
+  rownames(df) <- df.feature$coord.intron
+  
+ 
+  # Match cells
+ 
+  overlap <- intersect(df.pheno$Cell, df.pheno.2$cell.id)
+  
+  df.pheno.2.small <- df.pheno.2[
+    df.pheno.2$cell.id %in% overlap, , drop=FALSE
+  ]
+  
+  df.small <- df[, df.pheno.2.small$cell.id.]
+  colnames(df.small) <- df.pheno.2.small$cell.id
+  
+ 
+  # Return
+ 
+  return(list(
+    matrix = df.small,
+    pheno  = df.pheno.2.small,
+    feature = df.feature
+  ))
+}
+```
+
+## Process all samples
+
+```{r}
+samples <- list(
+  list(id="SRR15652857", path="~/mnt/storage/.../SRR15652857/"),
+  list(id="SRR15652858", path="~/mnt/storage/.../SRR15652858/"),
+  list(id="SRR15652897", path="~/STAR-2.7.10b/SRR15652897/..."),
+  list(id="SRR15652970", path="/media/.../SRR15652970/"),
+  list(id="SRR15652975", path="~/STAR-2.7.10b/SRR15652975/"),
+  list(id="SRR15652861", path="~/mnt/storage/.../SRR15652861/"),
+  list(id="SRR15652896", path="~/mnt/storage/.../SRR15652896/"),
+  list(id="SRR15652900", path="~/mnt/storage/.../SRR15652900/"),
+  list(id="SRR15652844", path="~/mnt/storage/.../SRR15652844/"),
+  list(id="SRR15652845", path="~/mnt/storage/.../SRR15652845/"),
+  list(id="SRR15652846", path="~/mnt/storage/.../SRR15652846/"),
+  list(id="SRR15652847", path="~/mnt/storage/.../SRR15652847/"),
+  list(id="SRR15652867", path="~/mnt/storage/.../SRR15652867/"),
+  list(id="SRR15652868", path="~/mnt/storage/.../SRR15652868/"),
+  list(id="SRR15652869", path="~/mnt/storage/.../SRR15652869/"),
+  list(id="SRR15652870", path="~/mnt/storage/.../SRR15652870/"),
+  list(id="SRR15652862", path="~/mnt/storage/.../SRR15652862/"),
+  list(id="SRR15652859", path="~/mnt/storage/.../SRR15652859/")
+)
+
+results <- lapply(samples, function(x) {
+  process_sample(x$id, x$path, df.pheno)
+})
+```
+
+
+
+### Merge all samples
+```{r}
+# Merge phenoData
+df.pheno.merged <- do.call(rbind, lapply(results, `[[`, "pheno"))
+
+# Merge featureData
+df.feature.merged <- unique(do.call(rbind, lapply(results, `[[`, "feature")))
+
+# Merge matrices iteratively
+df.merged <- results[[1]]$matrix
+
+for(i in 2:length(results)) {
+  
+  df.2 <- results[[i]]$matrix
+  
+  common <- intersect(rownames(df.merged), rownames(df.2))
+  
+  df.merged <- cbind(
+    rbind(df.merged[common, ], df.merged[setdiff(rownames(df.merged), common), ]),
+    rbind(df.2[common, ], df.2[setdiff(rownames(df.2), common), ])
+  )
+}
+```
+
+### Export MARVEL input files
+```{r}
+path <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/SJ_STARsolo_MSI/"
+
+# Matrix
+writeMM(df.merged, file=paste(path, "matrix_counts.mtx", sep=""))
+
+# phenoData
+write.table(df.pheno.merged["cell.id"],
+            paste(path, "phenoData.txt", sep=""),
+            sep="\t", row.names=FALSE, quote=FALSE)
+
+# featureData
+write.table(df.feature.merged["coord.intron"],
+            paste(path, "featureData.txt", sep=""),
+            sep="\t", row.names=FALSE, quote=FALSE)
+```
+
+
+
+
