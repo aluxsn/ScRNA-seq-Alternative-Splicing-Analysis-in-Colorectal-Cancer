@@ -1,0 +1,143 @@
+---
+title: "RAW GENE COUNTS-  STARsolo to MARVEL/ for MSS CRC data"
+---
+
+```{r}
+# Packages for single-cell processing and matrix handling
+library(SingCellaR)
+library(data.table)
+library(plyr)
+library(Matrix)
+library(SingleCellExperiment)
+```
+
+## Load integrated metadata (SingCellaR object)
+```{r}
+# Path to integrated object (filtered high-quality cells)
+path <- "~/Desktop/stage_M2/integrate_marvel/SingCellaR_output/"
+file <- "Integrated_samples_MSS.rdata"
+
+load(file = paste(path, file, sep = ""))
+
+# Extract metadata (validated cells)
+df.pheno <- object@meta.data
+```
+
+
+### Function to process one sample
+
+```{r}
+process_sample <- function(sample_id, base_path) {
+  
+  # Path to STARsolo output
+  path <- paste(base_path, sample_id, "/Gene/filtered/", sep = "")
+  
+  # Initialize SingCellaR object
+  object.2 <- new("SingCellaR")
+  object.2@dir_path_10x_matrix <- path
+  object.2@sample_uniq_id <- ""
+  
+  # Load matrix
+  load_matrices_from_cellranger(object.2, cellranger.version = 3)
+  
+  # Extract cell IDs
+  cell.ids <- colnames(object.2)
+  
+  df.pheno.2 <- data.frame(
+    "cell.id." = cell.ids,
+    "cell.id" = paste(cell.ids, sample_id, sep = ""),
+    stringsAsFactors = FALSE
+  )
+  
+  # Find overlap with validated cells (SingCellaR filtering)
+  overlap <- intersect(df.pheno$Cell, df.pheno.2$cell.id)
+  
+  print(paste(sample_id, ":", length(overlap), "cells kept"))
+  
+  # Subset cells
+  df.pheno.2.small <- df.pheno.2[df.pheno.2$cell.id %in% overlap, ]
+  
+  # Extract count matrix
+  df <- counts(object.2)
+  df.small <- df[, df.pheno.2.small$cell.id.]
+  
+  # Rename columns (important for downstream)
+  colnames(df.small) <- df.pheno.2.small$cell.id
+  
+  return(df.small)
+}
+```
+
+
+### Process all samples
+```{r}
+# Base directory containing STARsolo outputs
+base_path <- "~/mnt/storage/Fastq_single_cell_atlas_pelka_et_al/Cellranger_starSolo_out/"
+
+# List of samples
+samples <- c(
+  "SRR15652831", "SRR15652834", "SRR15652835",
+  "SRR15652836", "SRR15652837", "SRR15652850",
+  "SRR15652851", "SRR15652852", "SRR15652853",
+  "SRR15652854", "SRR15652871", "SRR15653024",
+  "SRR15653116", "SRR15653117", "SRR15653120",
+  "SRR15653121", "SRR15653122"
+)
+
+# Apply function to all samples
+list_matrices <- lapply(samples, process_sample, base_path = base_path)
+
+# Name list elements
+names(list_matrices) <- samples
+```
+
+
+
+## Merge all samples
+
+```{r}
+# Combine all matrices (genes x cells)
+df.merged <- do.call(cbind, list_matrices)
+
+# Check dimensions
+dim(df.merged)
+class(df.merged)
+```
+
+## Export for MARVEL
+
+```{r}
+# Output directory
+path_out <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/Gene_STARsolo_MSS/"
+
+### 1. Count matrix
+writeMM(df.merged, file = paste(path_out, "matrix_counts.mtx", sep = ""))
+
+### 2. Cell metadata
+df.pheno.merged <- data.frame(cell.id = colnames(df.merged))
+
+write.table(
+  df.pheno.merged,
+  paste(path_out, "phenoData.txt", sep = ""),
+  sep = "\t",
+  col.names = TRUE,
+  row.names = FALSE,
+  quote = FALSE
+)
+
+### 3. Gene metadata
+df.feature.merged <- data.frame(gene_short_name = rownames(df.merged))
+
+write.table(
+  df.feature.merged,
+  paste(path_out, "featureData.txt", sep = ""),
+  sep = "\t",
+  col.names = TRUE,
+  row.names = FALSE,
+  quote = FALSE
+)
+```
+
+
+
+
