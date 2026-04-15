@@ -1,0 +1,85 @@
+---
+title: "Normalisation gene expression"
+output: html_notebook
+---
+## Load packages
+```{r}
+library(SingCellaR)
+library(plyr)
+library(Matrix)
+```
+
+## Load integrated R object
+```{r}
+path <- "~/Desktop/stage_M2/integrate_marvel/SingCellaR_output/"
+file <- "Integrated_samples_MSS.rdata"
+load(file=paste(path, file, sep=""))
+
+#########################################################################
+```
+
+## Prepare phenoData
+### Merge sample,  cluster, metadata
+
+```{r}
+df.pheno <- object@meta.data
+```
+
+### Rename cell, donor id column
+```{r}
+names(df.pheno)[which(names(df.pheno)=="Cell")] <- "cell.id"
+names(df.pheno)[which(names(df.pheno)=="sampleID")] <- "donor.id"
+```
+
+ ### Indicate cell typ
+
+```{r}
+df.pheno$cell.type <- NA
+  
+```
+
+### Subset relevant columns
+```{r}
+cols <- c("cell.id", "donor.id", "cell.type")
+    df.pheno <- df.pheno[, cols]
+```
+
+#### Save file
+```{r}
+path <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/Gene_SingCellaR_MSS/"
+    file <- "phenoData.txt"
+    write.table(df.pheno, paste(path, file, sep=""), sep="\t", col.names=TRUE, row.names=FALSE, quote=FALSE)
+
+# Prepare gene metadata
+    # Retrieve
+    df.feature <- get_genes_metadata(object)
+    
+    # Create column for gene name
+    df.feature$gene_short_name <- row.names(df.feature)
+    df.feature <- df.feature[, "gene_short_name", drop=FALSE]
+    row.names(df.feature) <- NULL
+```
+#### Save file
+
+```{r}
+path <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/Gene_SingCellaR_MSS/"
+    file <- "featureData.txt"
+    write.table(df.feature, paste(path, file, sep=""), sep="\t", col.names=TRUE, row.names=FALSE, quote=FALSE)
+```
+
+### Prepare matrix
+#### Retrieve matrix
+```{r}
+
+    df <- get_normalized_umi(object)
+
+    # Check alignmnet
+    table(colnames(df)==df.pheno$cell.id)
+    table(rownames(df)==df.feature$gene_short_name)
+
+    # Save file
+    path <- "~/Desktop/stage_M2/integrate_marvel/MARVEL_input/Gene_SingCellaR_MSS/"
+    file <- "matrix_normalised.mtx"
+    writeMM(df, file=paste(path, file, sep=""))
+```
+
