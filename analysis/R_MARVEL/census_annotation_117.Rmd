@@ -1,0 +1,105 @@
+---
+title: "Cell annotation( Tumor and non tumor) scRNA in CRC"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE) 
+```
+
+Using Census https://github.com/sjdlabgroup/Census to annotate cell types.
+
+```{r packages}
+library(Census)
+library(dplyr)
+library(Seurat)
+library(ggplot2)
+library(ggrepel)
+library(RColorBrewer)
+library(future)
+library(HGNChelper)
+library(SeuratDisk)
+library(SeuratData)
+```
+
+## Load data
+
+```{r data}
+
+#load("/home/assanefall/Desktop/stage_M2/integrate_marvel/annotation_Census.rdata")
+
+```
+
+## Seurat analysis
+
+```{r}
+obj <- CreateSeuratObject(counts = marvel$gene.count.matrix, project = "CRC", min.cells = 3, min.features = 200)
+
+obj <- NormalizeData(obj, normalization.method = "LogNormalize", scale.factor = 10000)
+obj <- FindVariableFeatures(obj, selection.method = "vst", nfeatures =  2500)
+
+# scale and run PCA
+obj <- ScaleData(obj, features = rownames(obj))
+obj <- Seurat::RunPCA(obj, features = VariableFeatures(object = obj))
+
+# Check number of PC components (we selected 20 PCs for downstream analysis, based on Elbow plot)
+ElbowPlot(obj)
+
+# cluster and visualize
+obj <- FindNeighbors(obj, dims = 1:20)
+obj <- FindClusters(obj, resolution = 0.8)
+obj <- RunUMAP(obj, dims = 1:10)
+DimPlot(obj, reduction = "umap")
+
+
+#library(SeuratData)
+#library(SeuratDisk)
+
+#SaveH5Seurat(obj, filename = "/media/aalentorn/home21/CRC_scrna/CRC1.h5Seurat")
+#Convert("/media/aalentorn/home21/CRC_scrna/CRC1.h5Seurat", dest = "h5ad")
+
+```
+
+## Census annotation
+
+```{r annotation}
+
+res_mix = census_main(obj, organ = 'Large_Intestine', predict_cancer = T)
+
+```
+
+## Plot Census annotation
+
+```{r plot annotation}
+
+
+ggplot(res_mix$pred, aes(umap1, umap2, color = celltype)) + 
+  geom_point(size = 0.1, shape = 16) + 
+  geom_label_repel(data = res_mix$pred %>% 
+                     group_by(celltype) %>% 
+                     summarize(u1 = mean(umap1), u2 = mean(umap2)), 
+                   force = 100, 
+                   aes(u1,u2, label=celltype), 
+                   size = 2, color = 'black', 
+                   label.padding = 0.1, 
+                   max.overlaps = 20) +
+  scale_color_manual(values=colorRampPalette(brewer.pal(10, "Spectral"))(length(unique(res_mix$pred$celltype)))) +
+  theme_classic() + 
+  theme(legend.position = 'none', 
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.title = element_text(color = 'black', size = 7))
+
+
+```
+
+## Save the annotation
+
+```{r save}
+
+save(res_mix, file = "/home/assanefall/Desktop/stage_M2/integrate_marvel/annotation_Census_mix.rdata")
+
+```
