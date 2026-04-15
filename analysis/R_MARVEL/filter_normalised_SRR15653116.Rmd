@@ -1,0 +1,184 @@
+---
+title: "FILTER NORMALISED SRR15652871"
+output: html_notebook
+
+This notebook implements a complete preprocessing workflow for the 10x scRNA‑seq sample SRR15652871 using SingCellaR. Raw CellRanger/STARsolo filtered matrices are loaded and annotated with standard quality metrics, including mitochondrial gene percentage, UMI counts, and number of detected genes per cell. Quality control is performed through diagnostic plots and empirical identification of outlier cells based on UMI–gene relationships. Cells are then filtered on UMI count, gene detection, and mitochondrial content, followed by UMI normalization and regression of technical covariates (library size and mitochondrial content). Highly variable genes are identified using a GLM‑based approach to support downstream dimensionality reduction and integration. Finally, the curated SingCellaR object is saved and used as input for multi‑sample integration and splicing analysis with MARVEL
+---
+
+
+
+# Load packages
+
+```{r}
+
+library(SingCellaR)
+library(ggplot2)
+library(data.table)
+library(Matrix)
+
+```
+
+# Read STARsolo files
+```{r}
+
+
+data_matrices_dir <- "~/mnt/storage/Fastq_single_cell_atlas_pelka_et_al/Cellranger_starSolo_out/SRR15652871/Gene/filtered/"
+Sample871 <- new("SingCellaR")
+Sample871@dir_path_10x_matrix <- data_matrices_dir
+Sample871@sample_uniq_id <- "SRR15652871"
+
+load_matrices_from_cellranger(Sample871, cellranger.version=3)
+
+# Check
+Sample871
+```
+
+# Compute % mt
+```{r}
+
+process_cells_annotation(Sample871, mito_genes_start_with="MT-")
+
+```
+
+# QC plots
+## Histogram
+```{r}
+
+    plot_cells_annotation(Sample871, type="histogram")
+
+    # Boxplot
+    plot_cells_annotation(Sample871, type="boxplot")
+    
+    # UMIs vs. the number of detected genes/cell
+        # Draft
+        plot_UMIs_vs_Detected_genes(Sample871)
+        
+        # Definition
+        data <- get_cells_annotation(Sample871)
+        x <- data$UMI_count
+        y <- data$detectedGenesPerCell
+        maintitle <- ""
+        ytitle <- "Genes Detected per Cell"
+        xtitle <- "UMI Count per Cell"
+        xmin <- 0 ; xmax <- max(x) ; xinterval <- 10000
+        ymin <- signif(min(y)-250, digits=1) ; ymax <- max(y) ; yinterval <- 1000
+    
+        # Plot
+        ggplot() +
+            geom_point(data, mapping=aes(x=x, y=y), size=0.1) +
+            scale_x_continuous(breaks=seq(xmin, xmax, by=xinterval), limits=c(xmin, xmax)) +
+            scale_y_continuous(breaks=seq(ymin, ymax, by=yinterval), limits=c(ymin, ymax)) +
+            labs(title=maintitle, x=xtitle, y=ytitle) +
+            theme(panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                panel.background = element_blank(),
+                panel.border=element_blank(),
+                plot.title=element_text(hjust = 0.5, size=15),
+                plot.subtitle=element_text(hjust = 0.5, size=15),
+                axis.line.y.left = element_line(color="black"),
+                axis.line.x = element_line(color="black"),
+                axis.title=element_text(size=12),
+                axis.text=element_text(size=12),
+                axis.text.x=element_text(size=10, colour="black", angle=45,  vjust=1.0, hjust=1.0),
+                axis.text.y=element_text(size=10, colour="black"),
+                #legend.position="none",
+                legend.title=element_text(size=8),
+                legend.text=element_text(size=8)
+                )
+                
+```
+
+## Indicate outlier cells (check plot 1st)
+       
+```{r}
+ data$outlier <- ifelse(data$UMI_count > 82000, "yes", "no")
+        data$outlier <- factor(data$outlier, levels=c("no", "yes"))
+        z <- data$outlier
+```
+        
+## Plot
+```{r}
+   plot <- ggplot() +
+            geom_point(data, mapping=aes(x=x, y=y, color=z), size=0.1) +
+            scale_x_continuous(breaks=seq(xmin, xmax, by=xinterval), limits=c(xmin, xmax)) +
+            scale_y_continuous(breaks=seq(ymin, ymax, by=yinterval), limits=c(ymin, ymax)) +
+            scale_color_manual(values=c("black", "red")) +
+            labs(title=maintitle, x=xtitle, y=ytitle) +
+            theme(panel.grid.major = element_blank(),
+                panel.grid.minor = element_blank(),
+                panel.background = element_blank(),
+                panel.border=element_blank(),
+                plot.title=element_text(hjust = 0.5, size=15),
+                plot.subtitle=element_text(hjust = 0.5, size=15),
+                axis.line.y.left = element_line(color="black"),
+                axis.line.x = element_line(color="black"),
+                axis.title=element_text(size=12),
+                axis.text=element_text(size=12),
+                axis.text.x=element_text(size=10, colour="black", angle=45,  vjust=1.0, hjust=1.0),
+                axis.text.y=element_text(size=10, colour="black"),
+                legend.position="none",
+                legend.title=element_text(size=8),
+                legend.text=element_text(size=8)
+                )
+
+```
+     
+
+```{r}
+     
+        # Save file
+        #path <- "/Users/seanwen/Documents/U2AF1_2019/Ou/Gene/SRR15652871/QC/"
+        #dir.create(path, showWarnings=FALSE)
+        #file <- "Genes Detected vs UMI Counts.pdf"
+        #ggsave(paste(path, file, sep=""), plot, width=5, height=5)
+        
+```
+   
+# Filter
+```{r}
+filter_cells_and_genes(Sample871,
+                       min_UMIs=1000,
+                       max_UMIs=82000,
+                       min_detected_genes=500,
+                       max_detected_genes=max(y),
+                       max_percent_mito=15,
+                       genes_with_expressing_cells=10,
+                       isRemovedDoublets=FALSE
+                       )
+                       
+```
+
+
+
+# Normalise UMI counts
+```{r}
+normalize_UMIs(Sample871, use.scaled.factor=TRUE)
+```
+
+
+
+# Regress out unwanted source of variations
+
+```{r}
+remove_unwanted_confounders(Sample871, residualModelFormulaStr="~UMI_count+percent_mito")
+```
+
+# Retrieve highly-variable genes (needed to load object for integration)
+
+```{r}
+get_variable_genes_by_fitting_GLM_model(Sample871,
+                                        mean_expr_cutoff=0.05,
+                                        disp_zscore_cutoff = 0.05
+                                        )
+```
+
+# Save object
+```{r}
+path <- "~/Desktop/stage_M2/integrate_marvel/SingCellaR_output/"
+dir.create(path, showWarnings=FALSE)
+file <- "SRR15652871.SingCellaR.rdata"
+save(Sample871, file=paste(path, file, sep=""))
+```
+
+
+
